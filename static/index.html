@@ -200,14 +200,206 @@
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.ok { background: #2ecc71; box-shadow: 0 6px 20px rgba(46,204,113,.3); }
 
+    /* ========= 赛马模式 ========= */
+    .race-toggle {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; color: #555; cursor: pointer;
+      user-select: none; white-space: nowrap;
+    }
+    .race-toggle input {
+      accent-color: #7209b7; width: 15px; height: 15px; cursor: pointer;
+    }
+    .race-grid {
+      width: 100%; height: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      padding: 16px;
+    }
+    .race-cell {
+      display: flex; flex-direction: column;
+      background: #fff; border-radius: 10px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.06);
+      overflow: hidden;
+      border: 2px solid transparent;
+      min-height: 0;
+    }
+    .race-cell-header {
+      padding: 8px 12px;
+      font-size: 12px; font-weight: 600; color: #555;
+      background: #f6f7fb; border-bottom: 1px solid #eee;
+      display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .race-badge {
+      font-size: 11px; padding: 1px 8px; border-radius: 8px;
+      background: #eef1ff; color: #4361ee;
+    }
+    .race-cell-body { flex: 1; position: relative; min-height: 0; }
+    .race-cell-body iframe { border-radius: 0; box-shadow: none; }
+    .race-fail {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px;
+      color: #e74c3c; font-size: 14px; font-weight: 600;
+      background: #fdf2f1;
+    }
+    .race-fail .fail-detail {
+      font-size: 11px; color: #c0392b; font-weight: 400;
+      padding: 0 16px; text-align: center; word-break: break-all;
+    }
+    .btn-pick {
+      margin: 10px 12px;
+      padding: 8px 0;
+      font-size: 13px; font-weight: 700;
+      background: #7209b7; color: #fff;
+      border: none; border-radius: 8px; cursor: pointer;
+      transition: background .2s;
+      flex-shrink: 0;
+    }
+    .btn-pick:hover { background: #5f0799; }
+    .btn-pick:disabled { background: #ccc; cursor: not-allowed; }
+
+    /* ========= 历史侧栏 ========= */
+    /* position: relative —— 窄屏下侧栏以抽屉形式覆盖在主区域之上 */
+    .main { flex: 1; display: flex; min-height: 0; position: relative; }
+    .sidebar {
+      width: 240px; flex-shrink: 0;
+      background: #fff; border-right: 1px solid #eee;
+      display: flex; flex-direction: column;
+      z-index: 15;
+    }
+    .sidebar.collapsed { display: none; }
+    .sidebar-header {
+      padding: 12px 14px;
+      font-size: 13px; font-weight: 700; color: #444;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-shrink: 0;
+    }
+    .sidebar-header button {
+      border: none; background: none; cursor: pointer; font-size: 13px;
+    }
+    .sidebar-actions { display: flex; align-items: center; gap: 2px; }
+    .btn-close-sidebar { display: none; }
+    /* 抽屉遮罩：仅手机端打开抽屉时显示 */
+    .sidebar-backdrop { display: none; }
+    .history-list { flex: 1; overflow-y: auto; }
+    .history-item {
+      padding: 10px 14px; cursor: pointer;
+      border-bottom: 1px solid #f6f6f8;
+      border-left: 3px solid transparent;
+      transition: background .15s;
+    }
+    .history-item:hover { background: #f4f6ff; }
+    .history-item.active { background: #eef1ff; border-left-color: #4361ee; }
+    .history-prompt {
+      font-size: 13px; color: #333;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .history-time { font-size: 11px; color: #999; margin-top: 3px; }
+    .history-hint {
+      padding: 22px 14px; font-size: 12px; color: #999;
+      text-align: center; line-height: 1.9;
+    }
+    .btn-history {
+      background: rgba(255,255,255,.2); color: #fff; border: none;
+      padding: 4px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;
+    }
+    .btn-history:hover { background: rgba(255,255,255,.35); }
+
+    /* ========= 继续修改条 ========= */
+    .iterate-bar {
+      padding: 10px 28px;
+      background: #f7f3ff;
+      border-bottom: 1px solid #eee;
+      flex-shrink: 0;
+    }
+    .iterate-bar .input-row { align-items: center; }
+    .iterate-label {
+      font-size: 13px; font-weight: 700; color: #7209b7; white-space: nowrap;
+    }
+    .iterate-bar input {
+      flex: 1; padding: 9px 14px; font-size: 13px;
+      border: 2px solid #e5d8f5; border-radius: 8px; outline: none;
+      font-family: inherit;
+      transition: border-color .2s;
+    }
+    .iterate-bar input:focus { border-color: #7209b7; }
+    .btn-iterate {
+      padding: 9px 18px; font-size: 13px; font-weight: 700;
+      background: #7209b7; color: #fff; border: none; border-radius: 8px;
+      cursor: pointer; white-space: nowrap;
+      transition: background .2s;
+    }
+    .btn-iterate:hover { background: #5f0799; }
+    .btn-iterate:disabled { background: #aaa; cursor: not-allowed; }
+
     /* ========= 响应式 ========= */
+    /* 平板 / 手机：赛马三路改为纵向堆叠，可滚动查看 */
+    @media (max-width: 900px) {
+      .race-grid { grid-template-columns: 1fr; overflow-y: auto; }
+      .race-cell { min-height: 460px; }
+    }
+
+    /* 手机：顶栏可换行、控件纵向排列、历史侧栏改为抽屉 */
     @media (max-width: 768px) {
-      header { padding: 12px 16px; }
-      header h1 { font-size: 16px; }
-      .input-bar { padding: 12px 16px; }
-      .input-row { flex-direction: column; }
+      header {
+        padding: 10px 14px;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      header h1 { font-size: 15px; }
+      header .tag { font-size: 10px; }
+      .btn-history { padding: 4px 10px; }
+      /* 状态文字不折行（避免出现「服务正 常」这种断行） */
+      header > span:last-child { white-space: nowrap; font-size: 12px; flex-shrink: 0; }
+
+      .input-bar { padding: 12px 14px; }
+      .input-row { flex-direction: column; align-items: stretch; gap: 8px; }
+      .race-toggle { align-self: flex-start; }
       .btn-generate { padding: 12px; height: auto; }
-      .iframe-wrapper { padding: 10px; }
+      .suggestions .chip { font-size: 11px; padding: 4px 10px; }
+
+      .preview-toolbar { top: 6px; right: 8px; gap: 4px; }
+      .preview-toolbar button { padding: 4px 8px; font-size: 11px; }
+      .iframe-wrapper { padding: 8px; }
+      .empty-state { width: 86%; }
+      .empty-state .emoji { font-size: 44px; margin-bottom: 10px; }
+      .empty-state .desc { font-size: 12px; }
+
+      /* 继续修改条：标签、输入框、按钮各占一行（规则需与基础 .iterate-bar .input-row 同权重） */
+      .iterate-bar { padding: 10px 14px; }
+      .iterate-bar .input-row {
+        flex-direction: column;
+        align-items: stretch;
+        flex-wrap: nowrap;
+        gap: 8px;
+      }
+      .iterate-label { flex: none; }
+      .iterate-bar input { flex: none; width: 100%; }
+      .btn-iterate { flex: none; width: 100%; padding: 10px; }
+
+      /* 侧栏改成覆盖式抽屉：固定定位，保证整屏高度（不受父容器高度影响）；默认收起由 JS 初始化 */
+      .sidebar {
+        position: fixed;
+        top: 0; left: 0; bottom: 0;
+        width: min(84vw, 340px);
+        z-index: 60;
+        box-shadow: 4px 0 24px rgba(0,0,0,.25);
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+      .btn-close-sidebar { display: block; font-size: 16px !important; padding: 2px 6px; }
+      .sidebar-backdrop.show {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.36);
+        z-index: 55;
+      }
+
+      .toast { max-width: calc(100vw - 24px); text-align: center; }
     }
   </style>
 </head>
@@ -217,6 +409,7 @@
 <header>
   <h1>🛠️ 小工具生成器</h1>
   <span class="tag" id="modeTag">检测中…</span>
+  <button class="btn-history" onclick="toggleSidebar()">📁 历史</button>
   <div class="spacer"></div>
   <span>
     <span class="status-dot" id="statusDot"></span>
@@ -228,6 +421,9 @@
 <div class="input-bar">
   <div class="input-row">
     <textarea id="promptInput" placeholder="描述你想要的小工具，例如：一个能算房贷月供、带提前还款对比的计算器…"></textarea>
+    <label class="race-toggle" title="同一需求并发生成 3 个版本，挑一个最喜欢的">
+      <input type="checkbox" id="raceToggle" /> 🏇 赛马
+    </label>
     <button class="btn-generate" id="generateBtn" onclick="generate()">✨ 生成</button>
   </div>
   <div class="suggestions">
@@ -239,8 +435,34 @@
   </div>
 </div>
 
-<!-- 预览区 -->
-<div class="preview-area">
+<!-- 继续修改条（打开某个项目后出现） -->
+<div class="iterate-bar hidden" id="iterateBar">
+  <div class="input-row">
+    <span class="iterate-label">🔧 继续修改</span>
+    <input id="iterateInput" placeholder="例如：把主色调改成蓝色 / 再加一个导出按钮…" />
+    <button class="btn-iterate" id="iterateBtn" onclick="iterate()">应用修改</button>
+  </div>
+</div>
+
+<!-- 主区域：历史侧栏 + 预览区 -->
+<div class="main">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span>📁 我的历史项目</span>
+      <span class="sidebar-actions">
+        <button onclick="loadProjects()" title="刷新列表">🔄</button>
+        <button class="btn-close-sidebar" onclick="closeSidebarOnMobile()" title="关闭">✕</button>
+      </span>
+    </div>
+    <div class="history-list" id="historyList">
+      <div class="history-hint">加载中…</div>
+    </div>
+  </aside>
+  <!-- 手机端抽屉的遮罩：点击空白处关闭 -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebarOnMobile()"></div>
+
+  <!-- 预览区 -->
+  <div class="preview-area">
   <div class="preview-toolbar">
     <button onclick="refreshIframe()">🔄 刷新</button>
     <button onclick="openInNewTab()">↗ 新窗口打开</button>
@@ -258,11 +480,15 @@
     <!-- iframe 容器 -->
     <iframe id="preview" class="hidden" sandbox="allow-scripts allow-forms allow-same-origin allow-downloads" title="生成的工具预览"></iframe>
 
+    <!-- 赛马视图：3 路并排 -->
+    <div class="race-grid hidden" id="raceGrid"></div>
+
     <!-- loading -->
     <div class="loading-overlay" id="loadingOverlay">
       <div class="spinner"></div>
-      <div class="loading-text">生成中，请稍候…</div>
+      <div class="loading-text" id="loadingText">生成中，请稍候…</div>
     </div>
+  </div>
   </div>
 </div>
 
@@ -280,11 +506,53 @@ const generateBtn = $('generateBtn');
 const modeTag = $('modeTag');
 const statusDot = $('statusDot');
 const statusText = $('statusText');
+const raceToggle = $('raceToggle');
+const raceGrid = $('raceGrid');
+const loadingText = $('loadingText');
+const sidebar = $('sidebar');
+const sidebarBackdrop = $('sidebarBackdrop');
+const historyList = $('historyList');
+const iterateBar = $('iterateBar');
+const iterateInput = $('iterateInput');
+const iterateBtn = $('iterateBtn');
+
+// =========== 全局状态 ===========
+let currentProjectId = null;   // 当前打开的项目 id（有它才能连续修改）
+let supabaseEnabled = false;   // 后端是否配置了 Supabase
+let lastRacePrompt = '';       // 最近一次赛马的需求原文（选定落库时用）
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// =========== 统一错误解析 ===========
+// 后端所有错误都返回 {error,status,message}，这里统一取出可读文案
+async function errorMessage(resp) {
+  try {
+    const data = await resp.json();
+    return data.message || data.detail || `请求失败（HTTP ${resp.status}）`;
+  } catch (e) {
+    return `请求失败（HTTP ${resp.status}）`;
+  }
+}
+
+function showLoading(text) {
+  loadingText.textContent = text;
+  loadingOverlay.classList.add('show');
+}
+
+function hideLoading() {
+  loadingOverlay.classList.remove('show');
+  loadingText.textContent = '生成中，请稍候…';
+}
 
 // =========== 状态检查 ===========
 async function checkHealth() {
   try {
     const resp = await fetch('/api/health');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     if (data.llm_configured) {
       modeTag.textContent = '✨ LLM 模式';
@@ -293,6 +561,7 @@ async function checkHealth() {
       modeTag.textContent = '🧩 Mock 模式';
       modeTag.className = 'tag mock';
     }
+    supabaseEnabled = !!data.supabase_configured;
     statusDot.classList.remove('offline');
     statusText.textContent = '服务正常';
   } catch (e) {
@@ -301,8 +570,159 @@ async function checkHealth() {
     statusDot.classList.add('offline');
     statusText.textContent = '后端未连接';
   }
+  loadProjects();
 }
 checkHealth();
+
+// =========== 历史项目侧栏 ===========
+function toggleSidebar() {
+  sidebar.classList.toggle('collapsed');
+  syncSidebarBackdrop();
+}
+
+// 窄屏（手机/竖屏）：侧栏是覆盖整屏的抽屉，默认收起，避免挡住输入区与预览
+function isNarrowScreen() {
+  return window.innerWidth <= 768;
+}
+// 只有「手机 + 抽屉展开」时才显示遮罩
+function syncSidebarBackdrop() {
+  sidebarBackdrop.classList.toggle(
+    'show',
+    isNarrowScreen() && !sidebar.classList.contains('collapsed')
+  );
+}
+function closeSidebarOnMobile() {
+  if (isNarrowScreen()) sidebar.classList.add('collapsed');
+  syncSidebarBackdrop();
+}
+if (isNarrowScreen()) sidebar.classList.add('collapsed');
+syncSidebarBackdrop();
+// 横竖屏切换 / 拉宽窗口时，收起抽屉并隐藏遮罩，避免遮罩残留在桌面布局上
+window.addEventListener('resize', () => {
+  if (!isNarrowScreen()) sidebar.classList.add('collapsed');
+  syncSidebarBackdrop();
+});
+
+async function loadProjects() {
+  if (!supabaseEnabled) {
+    historyList.innerHTML = '<div class="history-hint">未配置 Supabase<br>配置后历史项目会保存在这里</div>';
+    return;
+  }
+  try {
+    const resp = await fetch('/api/projects');
+    if (!resp.ok) throw new Error(await errorMessage(resp));
+    const data = await resp.json();
+    if (!data.projects.length) {
+      historyList.innerHTML = '<div class="history-hint">暂无历史项目<br>生成一个工具试试</div>';
+      return;
+    }
+    historyList.innerHTML = '';
+    data.projects.forEach((p) => {
+      const item = document.createElement('div');
+      item.className = 'history-item' + (p.id === currentProjectId ? ' active' : '');
+      const date = new Date(p.created_at).toLocaleString('zh-CN',
+        { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      item.innerHTML = `<div class="history-prompt">${escapeHtml(p.prompt)}</div>` +
+                       `<div class="history-time">${date}</div>`;
+      item.onclick = () => openProject(p.id);
+      historyList.appendChild(item);
+    });
+  } catch (e) {
+    historyList.innerHTML = '<div class="history-hint">历史列表加载失败<br>点击上方 ⟳ 重试</div>';
+  }
+}
+
+// 点击某条历史 → 重新打开之前生成的应用
+async function openProject(id) {
+  showLoading('正在打开项目…');
+  closeSidebarOnMobile();  // 手机端点开历史后自动收起抽屉
+  try {
+    const resp = await fetch(`/api/projects/${id}`);
+    if (!resp.ok) throw new Error(await errorMessage(resp));
+    const data = await resp.json();
+
+    currentProjectId = id;
+    lastHtml = data.project.final_html || '';
+
+    // 赛马记录尚未选定版本 → 还原 3 路视图，可继续点选（点选后回填同一项目）
+    if (!lastHtml && data.project.race_versions && data.project.race_versions.length) {
+      raceResults = data.project.race_versions;
+      lastRacePrompt = data.project.prompt;
+      renderRace({ results: raceResults });
+
+      emptyState.classList.add('hidden');
+      preview.classList.add('hidden');
+      raceGrid.classList.remove('hidden');
+      updateIterateBar();
+
+      modeTag.textContent = '🏇 历史赛马 · 待选择';
+      modeTag.className = 'tag llm';
+      loadProjects();
+      showToast('已打开赛马记录，点「就用这个」选定最终版本', 'ok');
+      return;
+    }
+
+    if (!lastHtml) { showToast('该项目没有保存的 HTML', 'error'); return; }
+
+    renderInIframe(lastHtml);
+    emptyState.classList.add('hidden');
+    raceGrid.classList.add('hidden');
+    preview.classList.remove('hidden');
+    updateIterateBar();
+
+    modeTag.textContent = '📂 历史项目';
+    modeTag.className = 'tag llm';
+    loadProjects();  // 刷新高亮
+    showToast('✅ 已打开历史项目', 'ok');
+  } catch (e) {
+    console.error(e);
+    showToast('❌ ' + (e.message || '打开项目失败'), 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// =========== 连续修改 ===========
+function updateIterateBar() {
+  // 赛马视图下还没有选定的单一版本 → 不显示修改框
+  iterateBar.classList.toggle('hidden', !currentProjectId || !lastHtml);
+}
+
+async function iterate() {
+  const requirement = iterateInput.value.trim();
+  if (!requirement) { showToast('请先输入修改要求', 'error'); return; }
+  if (!currentProjectId) { showToast('请先生成或打开一个项目', 'error'); return; }
+
+  showLoading('正在修改，请稍候…');
+  iterateBtn.disabled = true;
+
+  try {
+    const resp = await fetch(`/api/projects/${currentProjectId}/iterate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: requirement }),
+    });
+
+    if (!resp.ok) throw new Error(await errorMessage(resp));
+
+    const data = await resp.json();
+    lastHtml = data.html;
+    renderInIframe(lastHtml);
+    iterateInput.value = '';
+    showToast('✅ 修改完成，已保存为新版本', 'ok');
+  } catch (err) {
+    console.error(err);
+    showToast('❌ ' + (err.message || '修改失败，请重试'), 'error');
+  } finally {
+    hideLoading();
+    iterateBtn.disabled = false;
+  }
+}
+
+// 修改输入框回车提交
+iterateInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); iterate(); }
+});
 
 // =========== 输入框快捷操作 ===========
 function setPrompt(text) {
@@ -322,6 +742,7 @@ promptInput.addEventListener('keydown', (e) => {
 
 // =========== 核心：生成 ===========
 let lastHtml = '';
+let raceResults = [];
 
 async function generate() {
   const prompt = promptInput.value.trim();
@@ -329,9 +750,18 @@ async function generate() {
     showToast('请先输入需求描述', 'error');
     return;
   }
+  closeSidebarOnMobile();  // 手机端生成前收起历史抽屉，保证能看见结果
+  // 勾选赛马 → 3 路并发；否则 → 单路生成（第 3 步原有逻辑）
+  if (raceToggle.checked) {
+    return generateRace(prompt);
+  }
+  return generateSingle(prompt);
+}
 
+// ---- 单路生成（原逻辑，保持不变） ----
+async function generateSingle(prompt) {
   // 进入 loading
-  loadingOverlay.classList.add('show');
+  showLoading('生成中，请稍候…');
   generateBtn.disabled = true;
   generateBtn.textContent = '生成中…';
 
@@ -342,10 +772,7 @@ async function generate() {
       body: JSON.stringify({ prompt }),
     });
 
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: '请求失败' }));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
-    }
+    if (!resp.ok) throw new Error(await errorMessage(resp));
 
     const data = await resp.json();
     lastHtml = data.html;
@@ -355,7 +782,13 @@ async function generate() {
 
     // 更新空状态 / 可见性
     emptyState.classList.add('hidden');
+    raceGrid.classList.add('hidden');
     preview.classList.remove('hidden');
+
+    // 后端已自动落库 → 记录项目 id，开启"继续修改"
+    currentProjectId = data.project_id || null;
+    updateIterateBar();
+    if (currentProjectId) loadProjects();
 
     // 顶部 tag 同步更新
     if (data.mode === 'llm') {
@@ -366,14 +799,151 @@ async function generate() {
       modeTag.className = 'tag mock';
     }
 
-    showToast('✅ 生成成功', 'ok');
+    if (data.mode === 'mock' && data.notice) {
+      // 回退 mock：告诉用户具体原因，而不是静默降级
+      showToast(`⚠️ 大模型暂不可用（${data.notice}），已返回内置示例`, 'error');
+    } else {
+      showToast('✅ 生成成功', 'ok');
+    }
   } catch (err) {
     console.error(err);
-    showToast('❌ ' + err.message, 'error');
+    showToast('❌ ' + (err.message || '生成失败，请重试'), 'error');
   } finally {
-    loadingOverlay.classList.remove('show');
+    hideLoading();
     generateBtn.disabled = false;
     generateBtn.textContent = '✨ 生成';
+  }
+}
+
+// ---- 赛马模式：3 路并发，并排预览，选定为最终版本 ----
+async function generateRace(prompt) {
+  showLoading('3 路并发生成中…');
+  generateBtn.disabled = true;
+  generateBtn.textContent = '赛马中…';
+
+  try {
+    const resp = await fetch('/api/generate_race', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+
+    if (!resp.ok) throw new Error(await errorMessage(resp));
+
+    const data = await resp.json();
+    raceResults = data.results;
+    lastRacePrompt = prompt;
+    lastHtml = '';                                  // 赛马视图下尚无最终版本
+    currentProjectId = data.project_id || null;     // 生成时已落库，点选回填同一项目
+    updateIterateBar();
+    renderRace(data);
+
+    // 切换到赛马视图
+    emptyState.classList.add('hidden');
+    preview.classList.add('hidden');
+    raceGrid.classList.remove('hidden');
+
+    modeTag.textContent = `🏇 赛马 ${data.ok_count}/3 路成功`;
+    modeTag.className = 'tag llm';
+    if (currentProjectId) loadProjects();
+
+    if (data.ok_count === 0) {
+      showToast('❌ 3 路全部生成失败，请稍后重试', 'error');
+    } else {
+      showToast(`✅ 赛马完成：${data.ok_count}/3 路成功，已存入历史`, 'ok');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('❌ ' + (err.message || '赛马请求失败，请重试'), 'error');
+  } finally {
+    hideLoading();
+    generateBtn.disabled = false;
+    generateBtn.textContent = '✨ 生成';
+  }
+}
+
+function renderRace(data) {
+  raceGrid.innerHTML = '';
+  const names = ['A', 'B', 'C'];
+
+  data.results.forEach((r, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'race-cell';
+    cell.innerHTML = `
+      <div class="race-cell-header">
+        <span class="race-badge">方案 ${names[i] || (i + 1)}</span>
+        <span>${r.label}</span>
+      </div>
+      <div class="race-cell-body"></div>
+      <button class="btn-pick" ${r.ok ? '' : 'disabled'}>就用这个</button>
+    `;
+
+    const body = cell.querySelector('.race-cell-body');
+    if (r.ok) {
+      // 成功路：Blob URL 渲染 iframe 预览
+      const ifr = document.createElement('iframe');
+      ifr.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin allow-downloads');
+      ifr.title = `方案 ${names[i] || (i + 1)} 预览`;
+      const blob = new Blob([r.html], { type: 'text/html;charset=utf-8' });
+      ifr.src = URL.createObjectURL(blob);
+      body.appendChild(ifr);
+    } else {
+      // 失败路：格子内显示"生成失败"，不影响其他格子
+      body.innerHTML = `<div class="race-fail">😢 生成失败<div class="fail-detail">${r.error || ''}</div></div>`;
+    }
+
+    cell.querySelector('.btn-pick').addEventListener('click', () => pickVariant(i));
+    raceGrid.appendChild(cell);
+  });
+}
+
+// 点选某一路 → 标记为最终版本，切回单路预览，并落库
+let pickingVariant = false;
+async function pickVariant(i) {
+  const r = raceResults[i];
+  if (!r || !r.ok || pickingVariant) return;
+
+  lastHtml = r.html;
+  renderInIframe(lastHtml);
+
+  raceGrid.classList.add('hidden');
+  preview.classList.remove('hidden');
+
+  const name = ['A', 'B', 'C'][i] || (i + 1);
+  modeTag.textContent = `✨ 已选定方案 ${name} · ${r.label}`;
+  modeTag.className = 'tag llm';
+  showToast(`✅ 已选定方案 ${name}（${r.label}）为最终版本`, 'ok');
+
+  // 赛马选定落库：回填到赛马生成时创建的项目（无 id 时才新建，兼容旧流程）
+  if (supabaseEnabled) {
+    pickingVariant = true;
+    document.querySelectorAll('.btn-pick').forEach((b) => { b.disabled = true; });
+    try {
+      const body = {
+        prompt: lastRacePrompt,
+        final_html: r.html,
+        race_versions: raceResults.map((x) => (
+          { label: x.label, ok: x.ok, html: x.html, error: x.error }
+        )),
+      };
+      if (currentProjectId) body.project_id = currentProjectId;
+
+      const resp = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) throw new Error(await errorMessage(resp));
+      const d = await resp.json();
+      currentProjectId = d.project_id;
+      updateIterateBar();
+      loadProjects();
+    } catch (e) {
+      console.error('赛马落库失败（不影响使用）', e);
+      showToast('⚠️ 已选定，但保存历史失败：' + (e.message || '网络异常'), 'error');
+    } finally {
+      pickingVariant = false;
+    }
   }
 }
 
@@ -422,6 +992,17 @@ function showToast(msg, type) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.classList.remove('show'); }, 2400);
 }
+
+// =========== 全局兜底：任何未捕获异常都不白屏 ===========
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('未处理的 Promise 异常:', e.reason);
+  const msg = (e.reason && e.reason.message) ? e.reason.message : '请求异常';
+  showToast('❌ ' + msg + '，请稍后重试', 'error');
+});
+
+window.addEventListener('error', (e) => {
+  console.error('未捕获错误:', e.message);
+});
 </script>
 </body>
 </html>

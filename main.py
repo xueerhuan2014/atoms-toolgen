@@ -2,8 +2,9 @@
 小工具生成器 — FastAPI 后端入口
 
 核心职责：
-  1. POST /api/generate  接收 prompt，返回一段可直接在 iframe 中渲染的单文件 HTML
-  2. GET  /              返回 static/index.html 前端页面
+  1. POST /api/generate       接收 prompt，返回一段可直接在 iframe 中渲染的单文件 HTML
+  2. POST /api/generate_race  赛马模式：asyncio 并发 3 路生成，单路失败不影响其余
+  3. GET  /                   返回 static/index.html 前端页面
 
 设计原则：
   - generate_app(prompt) -> str 独立封装，便于替换为真实大模型调用
@@ -14,19 +15,25 @@
 import os
 import re
 import json
+import time
 import random
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # 加载 .env（若存在）
 load_dotenv()
+
+import db  # noqa: E402  必须在 load_dotenv() 之后导入，保证 db 模块读到环境变量
 
 # ---------------------------------------------------------------------------
 # 配置读取 —— 全部从环境变量取，代码不含硬编码密钥
@@ -49,6 +56,12 @@ LLM_API_KEY = "" if _looks_like_placeholder(_raw_api_key) else _raw_api_key
 
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini").strip()
+
+# 超时与重试：单次请求超时 + 失败后最多再试 2 次（可用环境变量覆盖）
+LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "60"))            # 生成单次超时
+LLM_TIMEOUT_ITERATE = float(os.environ.get("LLM_TIMEOUT_ITERATE", "90"))  # 修改单次超时（输入更长）
+LLM_MAX_RETRIES = max(0, int(os.environ.get("LLM_MAX_RETRIES", "2")))
+LLM_RETRY_BACKOFF = float(os.environ.get("LLM_RETRY_BACKOFF", "1.5"))
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
@@ -807,81 +820,283 @@ MOCK_EXAMPLES = [
 # ===========================================================================
 # 大模型调用（OpenAI 兼容格式）
 # ===========================================================================
-def _call_llm(prompt: str) -> Optional[str]:
-    """调用大模型，成功返回 HTML 字符串，失败返回 None。"""
-    try:
-        import httpx
+def _build_llm_payload(prompt: str, temperature: float = 0.7, style_hint: str = "") -> dict:
+    """组装 OpenAI 兼容的 chat/completions 请求体。style_hint 用于赛马模式区分风格。"""
+    system_prompt = (
+        "你是一个前端工具生成器。用户会描述一个小工具的需求，"
+        "请你输出一段完整的、自包含的单文件 HTML 代码。"
+        "要求：\n"
+        "1. 必须以 <!DOCTYPE html> 开头，包含完整的 <html><head><body> 结构；\n"
+        "2. 所有 CSS 和 JS 必须内联（不依赖外部 CDN）；\n"
+        "3. 使用原生 JavaScript，不要用 React/Vue/Angular；\n"
+        "4. 样式美观、交互可用、中文界面；\n"
+        "5. 只输出 HTML 代码本身，不要任何解释、Markdown 代码块标记（```html```）或额外文字。"
+    )
+    user_content = prompt if not style_hint else f"{prompt}\n{style_hint}"
+    return {
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": temperature,
+    }
 
-        system_prompt = (
-            "你是一个前端工具生成器。用户会描述一个小工具的需求，"
-            "请你输出一段完整的、自包含的单文件 HTML 代码。"
-            "要求：\n"
-            "1. 必须以 <!DOCTYPE html> 开头，包含完整的 <html><head><body> 结构；\n"
-            "2. 所有 CSS 和 JS 必须内联（不依赖外部 CDN）；\n"
-            "3. 使用原生 JavaScript，不要用 React/Vue/Angular；\n"
-            "4. 样式美观、交互可用、中文界面；\n"
-            "5. 只输出 HTML 代码本身，不要任何解释、Markdown 代码块标记（```html```）或额外文字。"
-        )
 
-        payload = {
-            "model": LLM_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.7,
-        }
+def _clean_llm_html(content: str) -> Optional[str]:
+    """
+    清洗并校验大模型返回内容，失败返回 None。
 
-        url = f"{LLM_BASE_URL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {LLM_API_KEY}",
-            "Content-Type": "application/json",
-        }
+    模型常见的不听话输出（都会被处理）：
+    1. 纯 HTML；
+    2. 整体包在 ```html ... ``` 里；
+    3. 前面一段说明文字，再 ```html，再 HTML（围栏在中间）；
+    4. HTML 后面还跟一段说明文字。
+    做法：先去掉第一个围栏及其之前的内容，再从第一个 HTML 起始标记裁到最后一个 </html>。
+    """
+    content = content.strip()
 
-        # 连接 5 秒 + 整体 10 秒超时，假 key 或网络问题快速失败，别让前端一直等
-        logger.info(f"调用大模型: model={LLM_MODEL}, url={url}")
-        resp = httpx.post(url, headers=headers, json=payload,
-                          timeout=httpx.Timeout(10.0, connect=5.0))
-        resp.raise_for_status()
-        data = resp.json()
+    # 1) 定位第一个 markdown 围栏，丢弃围栏及其之前的所有说明文字
+    fence = re.search(r"```(?:html|HTML)?\s*\n?", content)
+    if fence:
+        content = content[fence.end():]
 
-        content = data["choices"][0]["message"]["content"].strip()
+    # 2) 裁剪到第一个 HTML 起始标记（防止围栏被写坏时仍有前置文字）
+    lower = content.lower()
+    start = lower.find("<!doctype html")
+    if start == -1:
+        start = lower.find("<html")
+    if start > 0:
+        content = content[start:]
 
-        # 清洗可能存在的 markdown 代码块标记
-        content = re.sub(r"^```(?:html|HTML)?\s*", "", content)
-        content = re.sub(r"\s*```\s*$", "", content)
+    # 3) 裁剪到最后一个 </html>，丢弃后面的解释文字
+    lower = content.lower()
+    end = lower.rfind("</html>")
+    if end != -1:
+        content = content[: end + len("</html>")]
 
-        if "<!DOCTYPE html>" not in content.lower() and "<html" not in content.lower():
-            logger.warning("大模型返回内容看起来不是 HTML，可能格式有问题")
-        return content
+    content = content.strip()
 
-    except Exception as e:
-        logger.error(f"大模型调用失败: {e}")
+    if not content:
+        logger.error("大模型返回空内容")
         return None
+    if "<!DOCTYPE html>" not in content.lower() and "<html" not in content.lower():
+        logger.error(f"大模型返回非 HTML 内容（前200字): {content[:200]}")
+        return None
+    return content
+
+
+def _friendly_status_reason(status_code: int) -> str:
+    """把 HTTP 状态码翻译成用户能看懂的原因。"""
+    if status_code in (401, 403):
+        return "API Key 无效或没有权限"
+    if status_code == 429:
+        return "模型服务限流或额度已耗尽"
+    if status_code == 408:
+        return "模型服务响应超时"
+    if status_code >= 500:
+        return f"模型服务端异常（{status_code}）"
+    return f"模型服务返回错误（{status_code}）"
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    """只有超时/限流/服务端异常值得重试；鉴权、参数类错误重试无意义。"""
+    return status_code in (408, 429) or status_code >= 500
+
+
+def _llm_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def _extract_llm_html(resp) -> tuple[Optional[str], Optional[str]]:
+    """从响应中取出并清洗 HTML，返回 (html, 失败原因)。"""
+    try:
+        raw = resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"解析模型响应失败: {type(e).__name__}: {e}")
+        return None, "模型返回格式异常"
+
+    content = _clean_llm_html(raw or "")
+    if content is None:
+        return None, "模型返回内容不是有效网页"
+    return content, None
+
+
+def _post_llm(url: str, payload: dict, timeout_seconds: float, tag: str):
+    """同步调用 + 超时 + 重试。
+
+    成功返回 (response, None)；失败返回 (None, 用户可读原因)。
+    """
+    import httpx
+
+    reason = "模型服务暂时不可用"
+    for attempt in range(1, LLM_MAX_RETRIES + 2):
+        try:
+            resp = httpx.post(url, headers=_llm_headers(), json=payload,
+                              timeout=httpx.Timeout(timeout_seconds, connect=5.0))
+        except httpx.TimeoutException:
+            reason = f"模型响应超时（超过 {int(timeout_seconds)} 秒）"
+            logger.warning(f"{tag} 第 {attempt} 次调用超时")
+        except httpx.ConnectError as e:
+            reason = "网络连接失败（DNS 或网络不可达）"
+            logger.warning(f"{tag} 第 {attempt} 次连接失败: {e}")
+        except Exception as e:
+            reason = "网络请求异常"
+            logger.warning(f"{tag} 第 {attempt} 次调用异常: {type(e).__name__}: {e}")
+        else:
+            if resp.status_code < 400:
+                return resp, None
+            reason = _friendly_status_reason(resp.status_code)
+            if not _is_retryable_status(resp.status_code):
+                logger.error(f"{tag} 调用失败且不可重试: {reason}")
+                return None, reason
+            logger.warning(f"{tag} 第 {attempt} 次调用失败: {reason}")
+
+        if attempt <= LLM_MAX_RETRIES:
+            time.sleep(LLM_RETRY_BACKOFF * attempt)
+
+    logger.error(f"{tag} 重试 {LLM_MAX_RETRIES} 次后仍失败: {reason}")
+    return None, reason
+
+
+async def _post_llm_async(url: str, payload: dict, timeout_seconds: float, tag: str):
+    """_post_llm 的异步版本，供赛马模式并发调用。"""
+    import httpx
+
+    reason = "模型服务暂时不可用"
+    for attempt in range(1, LLM_MAX_RETRIES + 2):
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds, connect=5.0)
+            ) as client:
+                resp = await client.post(url, headers=_llm_headers(), json=payload)
+        except httpx.TimeoutException:
+            reason = f"模型响应超时（超过 {int(timeout_seconds)} 秒）"
+            logger.warning(f"{tag} 第 {attempt} 次调用超时")
+        except httpx.ConnectError as e:
+            reason = "网络连接失败（DNS 或网络不可达）"
+            logger.warning(f"{tag} 第 {attempt} 次连接失败: {e}")
+        except Exception as e:
+            reason = "网络请求异常"
+            logger.warning(f"{tag} 第 {attempt} 次调用异常: {type(e).__name__}: {e}")
+        else:
+            if resp.status_code < 400:
+                return resp, None
+            reason = _friendly_status_reason(resp.status_code)
+            if not _is_retryable_status(resp.status_code):
+                logger.error(f"{tag} 调用失败且不可重试: {reason}")
+                return None, reason
+            logger.warning(f"{tag} 第 {attempt} 次调用失败: {reason}")
+
+        if attempt <= LLM_MAX_RETRIES:
+            await asyncio.sleep(LLM_RETRY_BACKOFF * attempt)
+
+    logger.error(f"{tag} 重试 {LLM_MAX_RETRIES} 次后仍失败: {reason}")
+    return None, reason
+
+
+def _call_llm(prompt: str) -> tuple[Optional[str], Optional[str]]:
+    """单路生成。成功返回 (html, None)，失败返回 (None, 用户可读原因)。"""
+    if not LLM_API_KEY:
+        return None, "未配置 API Key"
+
+    url = f"{LLM_BASE_URL}/chat/completions"
+    logger.info(f"调用大模型: model={LLM_MODEL}, url={url}")
+    resp, reason = _post_llm(url, _build_llm_payload(prompt), LLM_TIMEOUT, "单路生成")
+    if resp is None:
+        return None, reason
+
+    content, reason = _extract_llm_html(resp)
+    if content:
+        logger.info(f"大模型返回 OK: {len(content)} 字符")
+    return content, reason
+
+
+async def _call_llm_async(prompt: str, temperature: float = 0.7,
+                          style_hint: str = "") -> tuple[Optional[str], Optional[str]]:
+    """_call_llm 的异步版本，供赛马模式用 asyncio.gather 并发调用。"""
+    if not LLM_API_KEY:
+        return None, "未配置 API Key"
+
+    url = f"{LLM_BASE_URL}/chat/completions"
+    resp, reason = await _post_llm_async(
+        url, _build_llm_payload(prompt, temperature, style_hint), LLM_TIMEOUT, "赛马一路"
+    )
+    if resp is None:
+        return None, reason
+
+    content, reason = _extract_llm_html(resp)
+    if content:
+        logger.info(f"赛马一路返回 OK: {len(content)} 字符 (temperature={temperature})")
+    return content, reason
+
+
+def _call_llm_iterate(current_html: str, requirement: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    连续修改：把「当前 HTML + 用户新要求」一起发给模型，在原 HTML 基础上改。
+    成功返回 (修改后的完整 HTML, None)，失败返回 (None, 用户可读原因)，不破坏原版本。
+    """
+    system_prompt = (
+        "你是一个前端工具修改器。你会收到一段现有的单文件 HTML 代码和用户的修改要求。"
+        "请在保留原有功能与整体结构的基础上，仅按修改要求做最小必要调整，输出修改后的完整 HTML。"
+        "要求：\n"
+        "1. 必须以 <!DOCTYPE html> 开头，包含完整的 <html><head><body> 结构；\n"
+        "2. 所有 CSS 和 JS 必须内联，使用原生 JavaScript；\n"
+        "3. 只输出修改后的完整 HTML 代码本身，不要任何解释或 Markdown 代码块标记。"
+    )
+    user_content = (
+        f"现有 HTML 代码：\n```html\n{current_html}\n```\n\n"
+        f"修改要求：{requirement}\n"
+        "请输出修改后的完整 HTML。"
+    )
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.4,  # 修改场景低温度，减少跑偏
+    }
+
+    url = f"{LLM_BASE_URL}/chat/completions"
+    logger.info(f"连续修改调用大模型: 原文 {len(current_html)} 字符, 要求: {requirement[:50]}...")
+    resp, reason = _post_llm(url, payload, LLM_TIMEOUT_ITERATE, "连续修改")
+    if resp is None:
+        return None, reason
+
+    content, reason = _extract_llm_html(resp)
+    if content:
+        logger.info(f"连续修改返回 OK: {len(content)} 字符")
+    return content, reason
 
 
 # ===========================================================================
 # 核心入口：generate_app(prompt) -> str
 # ===========================================================================
-def generate_app(prompt: str) -> str:
+def generate_app(prompt: str) -> tuple[str, str, Optional[str]]:
     """
     根据用户描述生成一段完整的单文件 HTML 工具页面。
 
     - 有 LLM_API_KEY 时优先调用大模型
-    - 无 API Key 或大模型失败时，根据 prompt 关键词匹配返回预置 mock
-    - 完全离线也能跑通
+    - 无 API Key 或大模型失败（含重试后仍失败）时，回退预置 mock，保证流程不中断
+    - 返回 (html, mode, notice)：notice 为回退原因（成功时为 None）
 
     函数签名保持稳定，方便未来替换成其他大模型 / 多模态生成方案。
     """
     # --- 1. 尝试真实大模型 ---
+    fallback_reason = None
     if LLM_API_KEY:
         logger.info(f"检测到 LLM_API_KEY，尝试调用大模型 (prompt={prompt[:50]}...)")
-        html = _call_llm(prompt)
+        html, fallback_reason = _call_llm(prompt)
         if html:
             logger.info("大模型调用成功")
-            return html, "llm"
-        logger.warning("大模型调用失败，回退到 mock 模式")
+            return html, "llm", None
+        logger.warning(f"大模型调用失败（{fallback_reason}），回退到 mock 模式")
     else:
+        fallback_reason = "未配置 API Key"
         logger.info("未检测到 LLM_API_KEY，直接进入 mock 模式")
 
     # --- 2. Mock 模式：按关键词匹配，匹配不到就随机 ---
@@ -890,11 +1105,55 @@ def generate_app(prompt: str) -> str:
         for kw in example["keywords"]:
             if kw.lower() in lower_prompt:
                 logger.info(f"mock 匹配命中: {example['name']} (关键词={kw})")
-                return example["html"], "mock"
+                return example["html"], "mock", fallback_reason
 
     # 兜底：返回房贷计算器（最复杂、最有用的示例）
     logger.info("无关键词命中，默认返回房贷计算器示例")
-    return MOCK_MORTGAGE_CALCULATOR, "mock"
+    return MOCK_MORTGAGE_CALCULATOR, "mock", fallback_reason
+
+
+# ===========================================================================
+# 赛马模式：同一需求，asyncio 并发 3 路生成，任意一路失败不影响其余
+# ===========================================================================
+RACE_VARIANTS = [
+    {"label": "简洁实用", "temperature": 0.4,
+     "style_hint": "本版本风格要求：极简实用，布局紧凑克制，信息密度高，少装饰。"},
+    {"label": "美观现代", "temperature": 0.7,
+     "style_hint": "本版本风格要求：视觉美观现代，善用圆角、阴影、渐变，留白舒适。"},
+    {"label": "创意大胆", "temperature": 1.0,
+     "style_hint": "本版本风格要求：大胆有创意，配色鲜明个性，可加入有趣的微交互与动画。"},
+]
+
+
+async def generate_race(prompt: str) -> list:
+    """
+    并发发起 3 路大模型生成（不同温度/风格），返回 3 个结果槽位。
+
+    每路结果: {"label", "ok", "html", "error"}；失败路 ok=False 且 html=None。
+    双保险：_call_llm_async 内部吞异常返回 None + gather(return_exceptions=True)。
+    """
+    async def run_variant(variant: dict) -> dict:
+        html, reason = await _call_llm_async(prompt, variant["temperature"], variant["style_hint"])
+        if html:
+            return {"label": variant["label"], "ok": True, "html": html, "error": None}
+        return {"label": variant["label"], "ok": False, "html": None,
+                "error": reason or "大模型调用失败或返回无效内容"}
+
+    results = await asyncio.gather(
+        *(run_variant(v) for v in RACE_VARIANTS),
+        return_exceptions=True,
+    )
+
+    # 兜底：某一路抛出未捕获异常 → 该路标记失败，不影响其他路
+    final = []
+    for variant, r in zip(RACE_VARIANTS, results):
+        if isinstance(r, Exception):
+            logger.error(f"赛马 [{variant['label']}] 未捕获异常: {type(r).__name__}: {r}")
+            final.append({"label": variant["label"], "ok": False, "html": None,
+                          "error": f"{type(r).__name__}: {r}"})
+        else:
+            final.append(r)
+    return final
 
 
 # ===========================================================================
@@ -903,21 +1162,214 @@ def generate_app(prompt: str) -> str:
 app = FastAPI(title="小工具生成器", version="1.0.0")
 
 
+# ===========================================================================
+# 全局异常处理：任何接口出错都返回可读 JSON（统一 {error,status,message}），
+# 前端据此提示用户，而不是拿到空响应 / HTML 错误页导致白屏
+# ===========================================================================
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request, exc):
+    """业务性错误（400/404/503 等）：把 detail 透出为 message。"""
+    message = exc.detail if isinstance(exc.detail, str) else "请求处理失败"
+    # Starlette 内置英文文案换成中文，避免前端直接弹英文
+    if exc.status_code == 405:
+        message = "该接口不支持此请求方法"
+    elif exc.status_code == 404 and message == "Not Found":
+        message = "接口不存在"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": True, "status": exc.status_code, "message": message},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request, exc):
+    """请求体 / 参数不合法（422）：不返回 pydantic 原始结构，给统一可读提示。"""
+    logger.warning(f"请求参数校验失败 {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={"error": True, "status": 422, "message": "请求参数不合法，请检查输入"},
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc):
+    """兜底：任何未捕获异常都不让服务/前端崩掉，返回 500 + 可读提示。"""
+    logger.error(
+        f"未捕获异常 {request.method} {request.url.path}: {type(exc).__name__}: {exc}",
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error": True, "status": 500, "message": "服务内部错误，请稍后重试"},
+    )
+
+
 class GenerateRequest(BaseModel):
     prompt: str
 
 
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
-    """生成工具 HTML 的核心接口"""
+    """生成工具 HTML 的核心接口（成功后自动持久化到 Supabase）"""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt 不能为空")
 
-    html, mode = generate_app(req.prompt.strip())
+    prompt = req.prompt.strip()
+    # 同步生成放到线程池：避免长耗时调用阻塞事件循环，导致其他接口（健康检查/历史列表）无响应
+    html, mode, notice = await asyncio.to_thread(generate_app, prompt)
+
+    # 持久化：写 projects + messages；失败只记日志，不影响生成主流程
+    project_id = None
+    if db.ENABLED:
+        row = await db.insert_project(prompt, html)
+        if row:
+            project_id = row.get("id")
+            await db.insert_message(project_id, "user", prompt)
+            await db.insert_message(project_id, "assistant", html)
+
     return JSONResponse({
         "html": html,
         "mode": mode,  # "llm" 或 "mock"
-        "prompt": req.prompt.strip(),
+        "prompt": prompt,
+        "project_id": project_id,
+        "notice": notice,  # 回退 mock 时的原因，前端用于友好提示
+    })
+
+
+class ProjectCreateRequest(BaseModel):
+    """赛马选定后落库：最终选中版 + 各版本快照"""
+    prompt: str
+    final_html: str
+    race_versions: Optional[list] = None
+    project_id: Optional[str] = None  # 赛马生成时已建的项目 id，选中后回填而不是新建
+
+
+@app.post("/api/projects")
+async def api_create_project(req: ProjectCreateRequest):
+    """赛马模式点选「就用这个」后，把最终版本与各版本 HTML 写入 Supabase"""
+    if not db.ENABLED:
+        raise HTTPException(status_code=503, detail="Supabase 未配置")
+    if not req.final_html.strip():
+        raise HTTPException(status_code=400, detail="final_html 不能为空")
+
+    # 赛马已在生成时落库 → 选中后回填同一项目，避免历史里出现重复记录
+    if req.project_id:
+        ok = await db.update_project_html(req.project_id, req.final_html)
+        if not ok:
+            raise HTTPException(status_code=502, detail="Supabase 写入失败")
+        await db.insert_message(req.project_id, "assistant", req.final_html)
+        return {"project_id": req.project_id, "updated": True}
+
+    if not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt 不能为空")
+    row = await db.insert_project(req.prompt.strip(), req.final_html, req.race_versions)
+    if not row:
+        raise HTTPException(status_code=502, detail="Supabase 写入失败")
+
+    project_id = row.get("id")
+    await db.insert_message(project_id, "user", req.prompt.strip())
+    await db.insert_message(project_id, "assistant", req.final_html)
+    return {"project_id": project_id, "updated": False}
+
+
+@app.get("/api/projects")
+async def api_list_projects():
+    """历史项目列表（不含大字段），按创建时间倒序"""
+    if not db.ENABLED:
+        raise HTTPException(status_code=503, detail="Supabase 未配置")
+    rows = await db.list_projects()
+    if rows is None:
+        raise HTTPException(status_code=502, detail="Supabase 读取失败")
+    return {"projects": rows}
+
+
+@app.get("/api/projects/{project_id}")
+async def api_get_project(project_id: str):
+    """单个项目完整内容 + 对话消息，用于重新打开历史应用"""
+    if not db.ENABLED:
+        raise HTTPException(status_code=503, detail="Supabase 未配置")
+    project = await db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    messages = await db.list_messages(project_id) or []
+    return {"project": project, "messages": messages}
+
+
+class IterateRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/projects/{project_id}/iterate")
+async def api_iterate_project(project_id: str, req: IterateRequest):
+    """连续修改：当前 HTML + 新要求一起发给模型，在原 HTML 上改并写回"""
+    if not db.ENABLED:
+        raise HTTPException(status_code=503, detail="Supabase 未配置，无法连续修改")
+    if not req.prompt or not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt 不能为空")
+
+    project = await db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    current_html = project.get("final_html") or ""
+    if not current_html:
+        raise HTTPException(status_code=400, detail="该项目没有可修改的 HTML")
+
+    requirement = req.prompt.strip()
+    # 同步模型调用放线程池，避免阻塞事件循环
+    new_html, reason = await asyncio.to_thread(_call_llm_iterate, current_html, requirement)
+    if not new_html:
+        # 修改失败不写回，原版本保持不变；把具体原因带给前端
+        raise HTTPException(
+            status_code=502,
+            detail=f"修改失败：{reason or '大模型暂时不可用'}。原版本未受影响，可稍后重试",
+        )
+
+    await db.update_project_html(project_id, new_html)
+    await db.insert_message(project_id, "user", requirement)
+    await db.insert_message(project_id, "assistant", new_html)
+
+    return {"project_id": project_id, "html": new_html, "mode": "llm"}
+
+
+@app.post("/api/generate_race")
+async def api_generate_race(req: GenerateRequest):
+    """赛马模式接口：并发 3 路生成，返回 results 数组（单路失败不影响其余）"""
+    if not req.prompt or not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt 不能为空")
+
+    prompt = req.prompt.strip()
+    logger.info(f"赛马模式: 并发 {len(RACE_VARIANTS)} 路生成 (prompt={prompt[:50]}...)")
+    results = await generate_race(prompt)
+    ok_count = sum(1 for r in results if r["ok"])
+    logger.info(f"赛马完成: {ok_count}/{len(RACE_VARIANTS)} 路成功")
+
+    # 3 路全部落库：生成即建项目（final_html 留空），用户点选后再回填同一项目
+    project_id = None
+    if db.ENABLED:
+        versions = [
+            {"label": r["label"], "ok": r["ok"], "html": r["html"], "error": r["error"]}
+            for r in results
+        ]
+        row = await db.insert_project(prompt, None, versions)
+        if row:
+            project_id = row.get("id")
+            await db.insert_message(project_id, "user", prompt)
+            summary = "赛马模式生成 %d 路（%d 路成功）：%s。请选择最终版本。" % (
+                len(results), ok_count,
+                "、".join(
+                    f"{'ABC'[i]}·{r['label']}" + ("（失败）" if not r["ok"] else "")
+                    for i, r in enumerate(results)
+                ),
+            )
+            await db.insert_message(project_id, "assistant", summary)
+
+    return JSONResponse({
+        "prompt": prompt,
+        "mode": "race",
+        "llm_configured": bool(LLM_API_KEY),
+        "ok_count": ok_count,
+        "project_id": project_id,
+        "results": results,
     })
 
 
@@ -927,7 +1379,7 @@ async def api_health():
     return {
         "status": "ok",
         "llm_configured": bool(LLM_API_KEY),
-        "supabase_configured": bool(SUPABASE_URL),
+        "supabase_configured": db.ENABLED,
         "mock_examples": [e["name"] for e in MOCK_EXAMPLES],
     }
 
@@ -954,6 +1406,6 @@ if __name__ == "__main__":
     logger.info(f"========== 小工具生成器启动 ==========")
     logger.info(f"监听地址 : 0.0.0.0:{PORT}")
     logger.info(f"LLM 配置 : {'已配置' if LLM_API_KEY else '未配置（将走 mock 模式）'}")
-    logger.info(f"Supabase : {'已配置' if SUPABASE_URL else '未配置'}")
+    logger.info(f"Supabase : {'已配置（持久化开启）' if db.ENABLED else '未配置（历史/连续修改不可用）'}")
     logger.info(f"=====================================")
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
