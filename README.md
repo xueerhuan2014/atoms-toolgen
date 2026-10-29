@@ -18,7 +18,7 @@
 
 | 层次 | 技术 | 版本 / 说明 |
 |------|------|-------------|
-| 语言 | Python | 3.10+（开发环境 3.15） |
+| 语言 | Python | 3.10+（线上 3.11） |
 | Web 框架 | FastAPI | `0.115.0` |
 | ASGI 服务器 | Uvicorn | `0.30.6`（`python -m uvicorn main:app`） |
 | HTTP 客户端 | httpx | `0.27.2`（调用大模型 + Supabase REST） |
@@ -26,7 +26,7 @@
 | 前端 | 原生 HTML / CSS / JavaScript | 单文件 [static/index.html](file:///d:/AI-trae/atoms-toolgen/static/index.html)，无框架、无打包 |
 | 大模型 | OpenAI 兼容 `POST /chat/completions` | 本项目当前配置 DeepSeek（`https://api.deepseek.com` / `deepseek-flash`），可换成 OpenAI、硅基流动等 |
 | 持久化 | Supabase（PostgREST） | 后端用 service_role key 访问，未配置时自动降级 |
-| 部署 | Render | [render.yaml](file:///d:/AI-trae/atoms-toolgen/render.yaml) |
+| 部署 | 阿里云服务器 + systemd（端口 8000） | 备选 [render.yaml](file:///d:/AI-trae/atoms-toolgen/render.yaml)，见下文「部署 / 公网访问」 |
 
 ## 目录结构与模块职责
 
@@ -184,7 +184,40 @@ alter table messages enable row level security;
 
 ## 部署 / 公网访问
 
-### 方案 A：Cloudflare Tunnel（推荐 —— 无需绑卡、无需服务器）
+**当前线上地址：<http://8.221.136.192:8000>**（阿里云服务器，`systemd` 托管，开机自启、进程异常自动拉起）
+
+### 方案 A：服务器常驻部署（当前采用）
+
+代码位于 `/opt/atoms-toolgen`，使用 Python 3.11 虚拟环境，`uvicorn` 监听 `0.0.0.0:8000`，由 `atoms-toolgen.service` 托管：
+
+```ini
+[Unit]
+Description=Atoms Tool Generator
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/atoms-toolgen
+ExecStart=/opt/atoms-toolgen/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+常用命令：
+
+```bash
+systemctl status atoms-toolgen     # 查看状态
+systemctl restart atoms-toolgen    # 更新代码后重启
+journalctl -u atoms-toolgen -f     # 实时日志
+```
+
+首次部署：上传代码与 `.env` → `python3.11 -m venv .venv` → `pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple` → 写入上面的 unit 文件 → `systemctl daemon-reload && systemctl enable --now atoms-toolgen`。云服务器需在安全组放行 TCP 8000。
+
+### 方案 B：Cloudflare Tunnel（备用 —— 无需服务器）
 
 前提：本地服务已在运行（见上文「本地启动指南」）。开一个**新的** PowerShell 窗口：
 
@@ -205,11 +238,11 @@ cloudflared tunnel --url http://localhost:8000
 - 链接是公开的：拿到链接的人都能使用你的大模型额度、查看历史记录，演示结束请 `Ctrl+C` 关闭隧道；
 - 若提示 `cloudflared` 不是内部或外部命令，重新打开 PowerShell 让 PATH 生效，或直接用完整路径 `& 'C:\Program Files (x86)\cloudflared\cloudflared.exe' tunnel --url http://localhost:8000`。
 
-### 方案 B：Render
+### 方案 C：Render
 
 仓库自带 [render.yaml](file:///d:/AI-trae/atoms-toolgen/render.yaml)：`pip install -r requirements.txt` + `uvicorn main:app --host 0.0.0.0 --port ${PORT}`，健康检查路径 `/api/health`。环境变量在 Render 控制台 Environment 中单独填写，不要写进仓库。
 
-> 注意：Render 免费实例创建 Web Service 时需要绑定银行卡；若无法绑卡，请使用方案 A。
+> 注意：Render 免费实例创建 Web Service 时需要绑定银行卡；若无法绑卡，请使用方案 B。
 
 ## 常见问题
 
