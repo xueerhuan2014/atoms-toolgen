@@ -122,6 +122,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 | `LLM_TIMEOUT_ITERATE` | 否 | `90` | 连续修改单次请求超时（秒，输入更长） |
 | `LLM_MAX_RETRIES` | 否 | `2` | 失败后重试次数（仅对超时 / 408 / 429 / 5xx 重试，401/403 不重试） |
 | `LLM_RETRY_BACKOFF` | 否 | `1.5` | 重试退避基数（秒），第 n 次重试等待 `1.5 × n` 秒 |
+| `DAILY_LLM_BUDGET` | 否 | `40` | 全站每日大模型调用次数上限（生成 / 修改各算 1 次，赛马三路算 3 次），超出返回 429；防止公开链接被刷 token |
+| `DAILY_IP_BUDGET` | 否 | `40` | 单个 IP 每日调用次数上限，超出返回 429 |
 | `SUPABASE_URL` | 否 | 空 | Supabase 项目地址：控制台 → Project Settings → Data API → Project URL。**不要带 `/rest/v1` 后缀**（代码会自动兼容） |
 | `SUPABASE_SERVICE_KEY` | 否 | 空 | Supabase 控制台 → Project Settings → API Keys → `service_role`（secret）。**不要用 anon key**，且只能放在后端 |
 

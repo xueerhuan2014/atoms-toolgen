@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -63,6 +63,11 @@ LLM_TIMEOUT_ITERATE = float(os.environ.get("LLM_TIMEOUT_ITERATE", "90"))  # 修�
 LLM_MAX_RETRIES = max(0, int(os.environ.get("LLM_MAX_RETRIES", "2")))
 LLM_RETRY_BACKOFF = float(os.environ.get("LLM_RETRY_BACKOFF", "1.5"))
 
+# 防刷额度：公开 Demo 任何人拿到链接都能调用大模型，用每日硬上限兜住 token 消耗。
+# 单位是“大模型调用次数”：普通生成/连续修改各 1 次，赛马 3 路算 3 次。
+DAILY_LLM_BUDGET = max(1, int(os.environ.get("DAILY_LLM_BUDGET", "40")))
+DAILY_IP_BUDGET = max(1, int(os.environ.get("DAILY_IP_BUDGET", "40")))
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "").strip()
 
@@ -77,6 +82,36 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("mini-tool-gen")
+
+# 每日额度计数器（单进程 uvicorn，内存计数即可；重启后清零）
+_llm_quota = {"date": "", "global": 0, "per_ip": {}}
+
+
+def _reserve_llm_quota(request: Request, units: int = 1) -> None:
+    """在调用大模型前扣减当日额度；mock 模式（未配置 Key）不计数不限制。"""
+    if not LLM_API_KEY:
+        return
+    today = time.strftime("%Y-%m-%d")
+    if _llm_quota["date"] != today:
+        _llm_quota.update({"date": today, "global": 0, "per_ip": {}})
+    ip = request.client.host if request.client else "unknown"
+    used_ip = int(_llm_quota["per_ip"].get(ip, 0))
+    if _llm_quota["global"] + units > DAILY_LLM_BUDGET:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日演示额度已用完（全站每天 {DAILY_LLM_BUDGET} 次），请明天再试",
+        )
+    if used_ip + units > DAILY_IP_BUDGET:
+        raise HTTPException(
+            status_code=429,
+            detail=f"你的今日次数已用完（每个 IP 每天 {DAILY_IP_BUDGET} 次），请明天再试",
+        )
+    _llm_quota["global"] += units
+    _llm_quota["per_ip"][ip] = used_ip + units
+    logger.info(
+        f"LLM 额度：{ip} +{units}，IP {used_ip + units}/{DAILY_IP_BUDGET}，"
+        f"全站 {_llm_quota['global']}/{DAILY_LLM_BUDGET}"
+    )
 
 
 # ===========================================================================
@@ -1209,12 +1244,13 @@ class GenerateRequest(BaseModel):
 
 
 @app.post("/api/generate")
-async def api_generate(req: GenerateRequest):
+async def api_generate(req: GenerateRequest, request: Request):
     """生成工具 HTML 的核心接口（成功后自动持久化到 Supabase）"""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt 不能为空")
 
     prompt = req.prompt.strip()
+    _reserve_llm_quota(request, 1)
     # 同步生成放到线程池：避免长耗时调用阻塞事件循环，导致其他接口（健康检查/历史列表）无响应
     html, mode, notice = await asyncio.to_thread(generate_app, prompt)
 
@@ -1300,7 +1336,7 @@ class IterateRequest(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/iterate")
-async def api_iterate_project(project_id: str, req: IterateRequest):
+async def api_iterate_project(project_id: str, req: IterateRequest, request: Request):
     """连续修改：当前 HTML + 新要求一起发给模型，在原 HTML 上改并写回"""
     if not db.ENABLED:
         raise HTTPException(status_code=503, detail="Supabase 未配置，无法连续修改")
@@ -1315,6 +1351,7 @@ async def api_iterate_project(project_id: str, req: IterateRequest):
         raise HTTPException(status_code=400, detail="该项目没有可修改的 HTML")
 
     requirement = req.prompt.strip()
+    _reserve_llm_quota(request, 1)
     # 同步模型调用放线程池，避免阻塞事件循环
     new_html, reason = await asyncio.to_thread(_call_llm_iterate, current_html, requirement)
     if not new_html:
@@ -1332,12 +1369,13 @@ async def api_iterate_project(project_id: str, req: IterateRequest):
 
 
 @app.post("/api/generate_race")
-async def api_generate_race(req: GenerateRequest):
+async def api_generate_race(req: GenerateRequest, request: Request):
     """赛马模式接口：并发 3 路生成，返回 results 数组（单路失败不影响其余）"""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt 不能为空")
 
     prompt = req.prompt.strip()
+    _reserve_llm_quota(request, max(1, len(RACE_VARIANTS)))
     logger.info(f"赛马模式: 并发 {len(RACE_VARIANTS)} 路生成 (prompt={prompt[:50]}...)")
     results = await generate_race(prompt)
     ok_count = sum(1 for r in results if r["ok"])
@@ -1381,6 +1419,11 @@ async def api_health():
         "llm_configured": bool(LLM_API_KEY),
         "supabase_configured": db.ENABLED,
         "mock_examples": [e["name"] for e in MOCK_EXAMPLES],
+        "quota": {
+            "daily_llm_budget": DAILY_LLM_BUDGET,
+            "daily_ip_budget": DAILY_IP_BUDGET,
+            "used_today": _llm_quota["global"] if _llm_quota["date"] == time.strftime("%Y-%m-%d") else 0,
+        },
     }
 
 
