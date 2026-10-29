@@ -400,6 +400,11 @@
       }
 
       .toast { max-width: calc(100vw - 24px); text-align: center; }
+
+      /* 手机端页面允许纵向滚动，并给预览区一个稳定的高度，避免记录打开后预览被压成一条缝 */
+      html, body { height: auto; }
+      body { min-height: 100vh; }
+      .main { flex: none; height: 62vh; min-height: 380px; }
     }
   </style>
 </head>
@@ -595,6 +600,15 @@ function closeSidebarOnMobile() {
   if (isNarrowScreen()) sidebar.classList.add('collapsed');
   syncSidebarBackdrop();
 }
+// 手机端点开历史 / 生成完成后，把预览区滚动到可视范围，避免「点了没反应」
+function focusMobilePreview() {
+  if (!isNarrowScreen()) return;
+  setTimeout(() => {
+    const bar = document.getElementById('iterateBar');
+    const target = (bar && !bar.classList.contains('hidden')) ? bar : document.querySelector('.main');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 120);
+}
 if (isNarrowScreen()) sidebar.classList.add('collapsed');
 syncSidebarBackdrop();
 // 横竖屏切换 / 拉宽窗口时，收起抽屉并隐藏遮罩，避免遮罩残留在桌面布局上
@@ -659,6 +673,7 @@ async function openProject(id) {
       modeTag.className = 'tag llm';
       loadProjects();
       showToast('已打开赛马记录，点「就用这个」选定最终版本', 'ok');
+      focusMobilePreview();
       return;
     }
 
@@ -674,6 +689,7 @@ async function openProject(id) {
     modeTag.className = 'tag llm';
     loadProjects();  // 刷新高亮
     showToast('✅ 已打开历史项目', 'ok');
+    focusMobilePreview();
   } catch (e) {
     console.error(e);
     showToast('❌ ' + (e.message || '打开项目失败'), 'error');
@@ -805,6 +821,7 @@ async function generateSingle(prompt) {
     } else {
       showToast('✅ 生成成功', 'ok');
     }
+    focusMobilePreview();
   } catch (err) {
     console.error(err);
     showToast('❌ ' + (err.message || '生成失败，请重试'), 'error');
@@ -852,6 +869,7 @@ async function generateRace(prompt) {
     } else {
       showToast(`✅ 赛马完成：${data.ok_count}/3 路成功，已存入历史`, 'ok');
     }
+    focusMobilePreview();
   } catch (err) {
     console.error(err);
     showToast('❌ ' + (err.message || '赛马请求失败，请重试'), 'error');
@@ -913,6 +931,7 @@ async function pickVariant(i) {
   modeTag.textContent = `✨ 已选定方案 ${name} · ${r.label}`;
   modeTag.className = 'tag llm';
   showToast(`✅ 已选定方案 ${name}（${r.label}）为最终版本`, 'ok');
+  focusMobilePreview();
 
   // 赛马选定落库：回填到赛马生成时创建的项目（无 id 时才新建，兼容旧流程）
   if (supabaseEnabled) {
