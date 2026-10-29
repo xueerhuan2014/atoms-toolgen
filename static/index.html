@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小工具生成器 · Mini-Tool Generator</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f8f9fb;
+      color: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ========= 顶栏 ========= */
+    header {
+      background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+      color: #fff;
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 2px 10px rgba(67, 97, 238, 0.25);
+      flex-shrink: 0;
+    }
+    header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+    header .tag {
+      font-size: 11px; background: rgba(255,255,255,.2);
+      padding: 2px 8px; border-radius: 10px;
+    }
+    header .tag.mock { background: rgba(247, 37, 133, .7); }
+    header .tag.llm { background: rgba(46, 204, 113, .7); }
+    header .spacer { flex: 1; }
+    header .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #2ecc71; display: inline-block;
+      margin-right: 6px; box-shadow: 0 0 6px #2ecc71;
+    }
+    header .status-dot.offline { background: #e74c3c; box-shadow: 0 0 6px #e74c3c; }
+
+    /* ========= 输入区 ========= */
+    .input-bar {
+      padding: 16px 28px;
+      background: #fff;
+      border-bottom: 1px solid #eee;
+      flex-shrink: 0;
+    }
+    .input-row {
+      display: flex;
+      gap: 10px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .input-row textarea {
+      flex: 1;
+      min-height: 56px;
+      max-height: 160px;
+      padding: 12px 16px;
+      font-size: 14px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      outline: none;
+      resize: vertical;
+      font-family: inherit;
+      line-height: 1.5;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .input-row textarea:focus {
+      border-color: #4361ee;
+      box-shadow: 0 0 0 3px rgba(67,97,238,.12);
+    }
+    .btn-generate {
+      padding: 0 26px;
+      font-size: 15px;
+      font-weight: 700;
+      background: #4361ee;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform .1s, background .2s;
+      white-space: nowrap;
+    }
+    .btn-generate:hover { background: #3a56d4; }
+    .btn-generate:active { transform: scale(.97); }
+    .btn-generate:disabled {
+      background: #aaa; cursor: not-allowed; transform: none;
+    }
+
+    .suggestions {
+      max-width: 1200px;
+      margin: 10px auto 0;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .suggestions .label {
+      font-size: 12px; color: #888;
+    }
+    .chip {
+      font-size: 12px; padding: 5px 12px;
+      background: #eef1ff; color: #4361ee;
+      border-radius: 14px; cursor: pointer;
+      transition: background .15s;
+      border: 1px solid transparent;
+    }
+    .chip:hover { background: #dde3ff; border-color: #b4c0ff; }
+
+    /* ========= 预览区 ========= */
+    .preview-area {
+      flex: 1;
+      display: flex;
+      position: relative;
+      background: #f0f2f5;
+    }
+    .preview-toolbar {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      display: flex;
+      gap: 6px;
+      z-index: 10;
+    }
+    .preview-toolbar button {
+      padding: 6px 12px;
+      font-size: 12px;
+      background: rgba(255,255,255,.9);
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+      transition: background .15s;
+    }
+    .preview-toolbar button:hover { background: #fff; }
+
+    .iframe-wrapper {
+      width: 100%; height: 100%;
+      padding: 16px;
+      position: relative;
+    }
+    iframe {
+      width: 100%; height: 100%;
+      border: none;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 2px 16px rgba(0,0,0,.06);
+    }
+
+    /* ========= 空状态 ========= */
+    .empty-state {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #999;
+      pointer-events: none;
+    }
+    .empty-state .emoji { font-size: 56px; margin-bottom: 16px; }
+    .empty-state .title { font-size: 18px; font-weight: 600; color: #666; margin-bottom: 8px; }
+    .empty-state .desc { font-size: 13px; }
+    .hidden { display: none !important; }
+
+    /* ========= Loading ========= */
+    .loading-overlay {
+      position: absolute; inset: 0;
+      background: rgba(240,242,245,.85);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 20;
+      backdrop-filter: blur(4px);
+    }
+    .loading-overlay.show { display: flex; }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 4px solid #e0e0e0;
+      border-top-color: #4361ee;
+      border-radius: 50%;
+      animation: spin .9s linear infinite;
+    }
+    .loading-text {
+      margin-left: 16px; font-size: 14px; color: #4361ee; font-weight: 600;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ========= 错误提示 ========= */
+    .toast {
+      position: fixed;
+      bottom: 28px; left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: #e74c3c; color: #fff;
+      padding: 10px 22px; border-radius: 8px;
+      font-size: 13px; z-index: 100;
+      opacity: 0; transition: all .25s;
+      box-shadow: 0 6px 20px rgba(231,76,60,.3);
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.ok { background: #2ecc71; box-shadow: 0 6px 20px rgba(46,204,113,.3); }
+
+    /* ========= 响应式 ========= */
+    @media (max-width: 768px) {
+      header { padding: 12px 16px; }
+      header h1 { font-size: 16px; }
+      .input-bar { padding: 12px 16px; }
+      .input-row { flex-direction: column; }
+      .btn-generate { padding: 12px; height: auto; }
+      .iframe-wrapper { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<header>
+  <h1>🛠️ 小工具生成器</h1>
+  <span class="tag" id="modeTag">检测中…</span>
+  <div class="spacer"></div>
+  <span>
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">连接中</span>
+  </span>
+</header>
+
+<!-- 输入区 -->
+<div class="input-bar">
+  <div class="input-row">
+    <textarea id="promptInput" placeholder="描述你想要的小工具，例如：一个能算房贷月供、带提前还款对比的计算器…"></textarea>
+    <button class="btn-generate" id="generateBtn" onclick="generate()">✨ 生成</button>
+  </div>
+  <div class="suggestions">
+    <span class="label">试试：</span>
+    <span class="chip" onclick="setPrompt(this.textContent)">一个房贷计算器，要对比提前还款</span>
+    <span class="chip" onclick="setPrompt(this.textContent)">一个 JSON 格式化工具</span>
+    <span class="chip" onclick="setPrompt(this.textContent)">一个待办事项清单，支持本地存储</span>
+    <span class="chip" onclick="setPrompt(this.textContent)">一个倒计时器</span>
+  </div>
+</div>
+
+<!-- 预览区 -->
+<div class="preview-area">
+  <div class="preview-toolbar">
+    <button onclick="refreshIframe()">🔄 刷新</button>
+    <button onclick="openInNewTab()">↗ 新窗口打开</button>
+    <button onclick="copyHtml()">📋 复制源码</button>
+  </div>
+
+  <div class="iframe-wrapper">
+    <!-- 空状态 -->
+    <div class="empty-state" id="emptyState">
+      <div class="emoji">🎯</div>
+      <div class="title">输入一句话，生成一个工具</div>
+      <div class="desc">试试上面的示例，或者描述你自己的需求</div>
+    </div>
+
+    <!-- iframe 容器 -->
+    <iframe id="preview" class="hidden" sandbox="allow-scripts allow-forms allow-same-origin allow-downloads" title="生成的工具预览"></iframe>
+
+    <!-- loading -->
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="spinner"></div>
+      <div class="loading-text">生成中，请稍候…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// =========== DOM 引用 ===========
+const $ = (id) => document.getElementById(id);
+const promptInput = $('promptInput');
+const preview = $('preview');
+const emptyState = $('emptyState');
+const loadingOverlay = $('loadingOverlay');
+const generateBtn = $('generateBtn');
+const modeTag = $('modeTag');
+const statusDot = $('statusDot');
+const statusText = $('statusText');
+
+// =========== 状态检查 ===========
+async function checkHealth() {
+  try {
+    const resp = await fetch('/api/health');
+    const data = await resp.json();
+    if (data.llm_configured) {
+      modeTag.textContent = '✨ LLM 模式';
+      modeTag.className = 'tag llm';
+    } else {
+      modeTag.textContent = '🧩 Mock 模式';
+      modeTag.className = 'tag mock';
+    }
+    statusDot.classList.remove('offline');
+    statusText.textContent = '服务正常';
+  } catch (e) {
+    modeTag.textContent = '❓ 离线';
+    modeTag.className = 'tag';
+    statusDot.classList.add('offline');
+    statusText.textContent = '后端未连接';
+  }
+}
+checkHealth();
+
+// =========== 输入框快捷操作 ===========
+function setPrompt(text) {
+  promptInput.value = text;
+  promptInput.focus();
+  // 自动触发生成
+  generate();
+}
+
+// Ctrl/Cmd + Enter 快捷提交
+promptInput.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    generate();
+  }
+});
+
+// =========== 核心：生成 ===========
+let lastHtml = '';
+
+async function generate() {
+  const prompt = promptInput.value.trim();
+  if (!prompt) {
+    showToast('请先输入需求描述', 'error');
+    return;
+  }
+
+  // 进入 loading
+  loadingOverlay.classList.add('show');
+  generateBtn.disabled = true;
+  generateBtn.textContent = '生成中…';
+
+  try {
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: '请求失败' }));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    lastHtml = data.html;
+
+    // 写入 iframe
+    renderInIframe(data.html);
+
+    // 更新空状态 / 可见性
+    emptyState.classList.add('hidden');
+    preview.classList.remove('hidden');
+
+    // 顶部 tag 同步更新
+    if (data.mode === 'llm') {
+      modeTag.textContent = '✨ LLM 实时生成';
+      modeTag.className = 'tag llm';
+    } else {
+      modeTag.textContent = '🧩 Mock 示例';
+      modeTag.className = 'tag mock';
+    }
+
+    showToast('✅ 生成成功', 'ok');
+  } catch (err) {
+    console.error(err);
+    showToast('❌ ' + err.message, 'error');
+  } finally {
+    loadingOverlay.classList.remove('show');
+    generateBtn.disabled = false;
+    generateBtn.textContent = '✨ 生成';
+  }
+}
+
+// 用 srcdoc 渲染
+function renderInIframe(html) {
+  // 为避免某些浏览器对 srcdoc 的限制，统一用 Blob URL
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  preview.src = url;
+}
+
+// =========== 工具按钮 ===========
+function refreshIframe() {
+  if (!preview.src) return;
+  const src = preview.src;
+  preview.src = 'about:blank';
+  setTimeout(() => { preview.src = src; }, 50);
+}
+
+function openInNewTab() {
+  if (!lastHtml) { showToast('还没有生成任何内容', 'error'); return; }
+  const blob = new Blob([lastHtml], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+}
+
+function copyHtml() {
+  if (!lastHtml) { showToast('还没有生成任何内容', 'error'); return; }
+  navigator.clipboard.writeText(lastHtml).then(() => {
+    showToast('✅ 源码已复制到剪贴板', 'ok');
+  }).catch(() => {
+    // 降级方案
+    const ta = document.createElement('textarea');
+    ta.value = lastHtml; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    showToast('✅ 源码已复制', 'ok');
+  });
+}
+
+// =========== Toast ===========
+let toastTimer = null;
+function showToast(msg, type) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type === 'ok' ? ' ok' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove('show'); }, 2400);
+}
+</script>
+</body>
+</html>
